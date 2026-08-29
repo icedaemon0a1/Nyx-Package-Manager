@@ -1,0 +1,17 @@
+[package]
+name = "nyx-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nyx: error model, output/UX abstraction, filesystem paths, content hashing"
+
+[dependencies]
+thiserror = { workspace = true }
+anstream = { workspace = true }
+anstyle = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

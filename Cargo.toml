@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nyx-core",
+    "crates/nyx-config",
+    "crates/nyx-alpm",
+    "crates/nyx-resolver",
+    "crates/nyx-transaction",
+    "crates/nyx-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+authors = ["Nyx contributors"]
+repository = "https://github.com/icedaemon0a1/Nyx-Package-Manager"
+
+[workspace.dependencies]
+thiserror = "2"
+anyhow = "1"
+toml_edit = { version = "0.25", features = ["parse", "display"] }
+serde = { version = "1", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
+anstream = "0.6"
+anstyle = "1"
+blake3 = "1"
+tempfile = "3"

@@ -1,0 +1,19 @@
+[package]
+name = "nyx-alpm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Safe Rust wrapper around the system libalpm (ALPM compatibility layer)"
+build = "build.rs"
+
+[dependencies]
+nyx-core = { path = "../nyx-core" }
+thiserror = { workspace = true }
+
+[build-dependencies]
+pkg-config = "0.3"
+
+[dev-dependencies]
+tempfile = { workspace = true }

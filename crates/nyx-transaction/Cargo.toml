@@ -1,0 +1,15 @@
+[package]
+name = "nyx-transaction"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Immutable transaction manifest format: atomic write, read, listing"
+
+[dependencies]
+nyx-core = { path = "../nyx-core" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

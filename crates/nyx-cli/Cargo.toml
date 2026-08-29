@@ -1,0 +1,22 @@
+[package]
+name = "nyx-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Nyx command-line interface"
+
+[[bin]]
+name = "nyx"
+path = "src/main.rs"
+
+[dependencies]
+nyx-core = { path = "../nyx-core" }
+nyx-config = { path = "../nyx-config" }
+nyx-alpm = { path = "../nyx-alpm" }
+nyx-resolver = { path = "../nyx-resolver" }
+nyx-transaction = { path = "../nyx-transaction" }
+clap = { workspace = true }
+anstream = { workspace = true }
+anstyle = { workspace = true }
