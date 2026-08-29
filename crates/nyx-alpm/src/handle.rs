@@ -5,14 +5,15 @@
 //! last alpm call you make... handle should be considered invalid and
 //! cannot be reused in any way" after release).
 
+use crate::borrowed_list::BorrowedList;
 use crate::cstr::cstr;
 use crate::db::Db;
 use crate::error::AlpmError;
 use crate::list::AlpmList;
+use crate::pkg::{Conflict, DepMissing, Package};
 use crate::sys;
 use std::ffi::CString;
 use std::path::Path;
-use std::ptr;
 
 /// An open libalpm context. `root` and `dbpath` are fixed at
 /// initialization time (libalpm has no post-init setter for them), so
@@ -132,40 +133,97 @@ impl Handle {
     /// databases. Returns `Ok(())` on success; a positive/negative return
     /// from libalpm both map to `Err` with the handle's last error.
     pub fn update_dbs(&mut self, dbs: &[Db<'_>], force: bool) -> Result<(), AlpmError> {
-        // Build a temporary alpm_list_t chain of borrowed db pointers.
-        // These nodes are ours; the *payloads* (db pointers) are borrowed
-        // from libalpm and must not be freed. We free only the chain
-        // nodes we allocated (via `alpm_list_t` boxed here), never their
-        // `data`.
-        let mut nodes: Vec<Box<sys::alpm_list_t>> = Vec::with_capacity(dbs.len());
-        for db in dbs {
-            nodes.push(Box::new(sys::alpm_list_t {
-                data: db.raw as *mut _,
-                prev: ptr::null_mut(),
-                next: ptr::null_mut(),
-            }));
-        }
-        for i in 0..nodes.len() {
-            let next_ptr = if i + 1 < nodes.len() {
-                &mut *nodes[i + 1] as *mut sys::alpm_list_t
-            } else {
-                ptr::null_mut()
-            };
-            nodes[i].next = next_ptr;
-        }
-        let head = nodes
-            .first_mut()
-            .map(|b| &mut **b as *mut sys::alpm_list_t)
-            .unwrap_or(ptr::null_mut());
-
-        let rc = unsafe { sys::alpm_db_update(self.raw, head, force as i32) };
-        // `nodes` (our own chain wrapper) is dropped here automatically;
-        // we never call alpm_list_free on it since we never asked
-        // libalpm to allocate it in the first place.
+        let chain = BorrowedList::from_ptrs(dbs.iter().map(|db| db.raw as *mut _));
+        let rc = unsafe { sys::alpm_db_update(self.raw, chain.as_raw(), force as i32) };
         if rc < 0 {
             return Err(self.last_error());
         }
         Ok(())
+    }
+
+    /// Check a candidate package set for missing dependencies.
+    ///
+    /// `pkglist` is the full set of packages that would be present after
+    /// the transaction (i.e. currently-installed packages plus the ones
+    /// being added, minus the ones in `remove`), matching
+    /// `alpm_checkdeps`'s documented contract. `upgrade` marks a subset
+    /// of `pkglist` as being upgrades-in-place (remove-then-add
+    /// semantics for reverse-dependency checking).
+    ///
+    /// Returns the list of unmet dependencies (empty = all satisfied).
+    /// This is a **read-only query**; it does not mutate any
+    /// transaction state (that only happens via `alpm_trans_*`, not yet
+    /// wrapped).
+    pub fn check_deps(
+        &self,
+        pkglist: &[Package<'_>],
+        remove: &[Package<'_>],
+        upgrade: &[Package<'_>],
+        reverse_deps: bool,
+    ) -> Vec<DepMissing> {
+        let pkglist_chain = BorrowedList::from_ptrs(pkglist.iter().map(|p| p.raw as *mut _));
+        let remove_chain = BorrowedList::from_ptrs(remove.iter().map(|p| p.raw as *mut _));
+        let upgrade_chain = BorrowedList::from_ptrs(upgrade.iter().map(|p| p.raw as *mut _));
+
+        let raw = unsafe {
+            sys::alpm_checkdeps(
+                self.raw,
+                pkglist_chain.as_raw(),
+                remove_chain.as_raw(),
+                upgrade_chain.as_raw(),
+                reverse_deps as i32,
+            )
+        };
+
+        // SAFETY: alpm_checkdeps transfers ownership of the returned
+        // list (and its alpm_depmissing_t payloads) to the caller per
+        // its doc comment; we copy every field out via DepMissing::from_raw
+        // and then free both the payloads (alpm_depmissing_free, via
+        // alpm_list_free_inner) and the list nodes (alpm_list_free) —
+        // this is exactly the FREELIST(p) pattern from alpm_list.h,
+        // spelled out rather than using the C macro.
+        let list: AlpmList<sys::alpm_depmissing_t> = unsafe { AlpmList::from_raw(raw) };
+        let out: Vec<DepMissing> = list.iter().map(|p| unsafe { DepMissing::from_raw(p) }).collect();
+        unsafe {
+            sys::alpm_list_free_inner(raw, Some(free_depmissing));
+            sys::alpm_list_free(raw);
+        }
+        out
+    }
+
+    /// Check a candidate package set for file/name/provides conflicts.
+    pub fn check_conflicts(&self, pkglist: &[Package<'_>]) -> Vec<Conflict> {
+        let pkglist_chain = BorrowedList::from_ptrs(pkglist.iter().map(|p| p.raw as *mut _));
+        let raw = unsafe { sys::alpm_checkconflicts(self.raw, pkglist_chain.as_raw()) };
+
+        // SAFETY: same ownership contract as check_deps above, but with
+        // alpm_conflict_t payloads and alpm_conflict_free.
+        let list: AlpmList<sys::alpm_conflict_t> = unsafe { AlpmList::from_raw(raw) };
+        let out: Vec<Conflict> = list.iter().map(|p| unsafe { Conflict::from_raw(p) }).collect();
+        unsafe {
+            sys::alpm_list_free_inner(raw, Some(free_conflict));
+            sys::alpm_list_free(raw);
+        }
+        out
+    }
+
+    /// Find a package among `dbs` that satisfies `depstring` (a
+    /// dependency spec such as `"foo>=1.2"` or a bare provides name).
+    pub fn find_dbs_satisfier<'a>(
+        &'a self,
+        dbs: &[Db<'a>],
+        depstring: &str,
+    ) -> Option<Package<'a>> {
+        let dbs_chain = BorrowedList::from_ptrs(dbs.iter().map(|d| d.raw as *mut _));
+        let depstring_c = CString::new(depstring).ok()?;
+        let raw = unsafe {
+            sys::alpm_find_dbs_satisfier(self.raw, dbs_chain.as_raw(), depstring_c.as_ptr())
+        };
+        if raw.is_null() {
+            None
+        } else {
+            Some(unsafe { Package::from_raw(raw) })
+        }
     }
 
     pub fn last_error(&self) -> AlpmError {
@@ -180,6 +238,20 @@ impl Handle {
             Ok(())
         }
     }
+}
+
+unsafe extern "C" fn free_depmissing(item: *mut std::os::raw::c_void) {
+    // SAFETY: called by alpm_list_free_inner exactly once per node for
+    // the list check_deps() got from alpm_checkdeps, whose payload type
+    // is alpm_depmissing_t*; this is the correct deallocator per
+    // alpm_depmissing_free's own contract.
+    unsafe { sys::alpm_depmissing_free(item as *mut sys::alpm_depmissing_t) };
+}
+
+unsafe extern "C" fn free_conflict(item: *mut std::os::raw::c_void) {
+    // SAFETY: same as free_depmissing, but for alpm_checkconflicts's
+    // alpm_conflict_t payloads and alpm_conflict_free.
+    unsafe { sys::alpm_conflict_free(item as *mut sys::alpm_conflict_t) };
 }
 
 impl Drop for Handle {

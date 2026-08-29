@@ -7,6 +7,7 @@
 //! released only when the owning handle is released — so `Db` has no
 //! `Drop` impl of its own.
 
+use crate::borrowed_list::BorrowedList;
 use crate::cstr::cstr;
 use crate::list::AlpmList;
 use crate::pkg::Package;
@@ -77,33 +78,17 @@ impl<'a> Db<'a> {
             })?;
 
         // Build a temporary alpm_list_t chain of needle C-string
-        // pointers. Same ownership pattern as Handle::update_dbs: the
-        // chain *nodes* are ours (boxed, freed on drop of `nodes`); the
-        // `data` payloads point at our own `CString`s, which outlive the
-        // call, so nothing here is ever passed to `alpm_list_free`.
-        let mut nodes: Vec<Box<sys::alpm_list_t>> = Vec::with_capacity(needle_cstrings.len());
-        for c in &needle_cstrings {
-            nodes.push(Box::new(sys::alpm_list_t {
-                data: c.as_ptr() as *mut _,
-                prev: std::ptr::null_mut(),
-                next: std::ptr::null_mut(),
-            }));
-        }
-        for i in 0..nodes.len() {
-            let next_ptr = if i + 1 < nodes.len() {
-                &mut *nodes[i + 1] as *mut sys::alpm_list_t
-            } else {
-                std::ptr::null_mut()
-            };
-            nodes[i].next = next_ptr;
-        }
-        let head = nodes
-            .first_mut()
-            .map(|b| &mut **b as *mut sys::alpm_list_t)
-            .unwrap_or(std::ptr::null_mut());
+        // pointers, via the same borrowed-node-chain helper used by
+        // Handle::update_dbs: the chain *nodes* are ours (freed when
+        // `chain` drops); the `data` payloads point at our own
+        // `CString`s, which outlive the call, so nothing here is ever
+        // passed to `alpm_list_free`.
+        let chain = BorrowedList::from_ptrs(
+            needle_cstrings.iter().map(|c| c.as_ptr() as *mut _),
+        );
 
         let mut result: *mut sys::alpm_list_t = std::ptr::null_mut();
-        let rc = unsafe { sys::alpm_db_search(self.raw, head, &mut result) };
+        let rc = unsafe { sys::alpm_db_search(self.raw, chain.as_raw(), &mut result) };
         if rc != 0 {
             return Err(crate::error::AlpmError {
                 errno: -1,

@@ -278,3 +278,69 @@ pub struct PackageFile {
     pub size: i64,
     pub mode: u32,
 }
+
+/// A single unmet dependency, as reported by `alpm_checkdeps`.
+///
+/// Owned: this struct copies every field out of the `alpm_depmissing_t`
+/// libalpm handed us (which `Handle::check_deps` frees via
+/// `alpm_depmissing_free` immediately after building this), so unlike
+/// [`Package`] it has no borrowed-pointer lifetime.
+#[derive(Debug, Clone)]
+pub struct DepMissing {
+    /// Name of the package the missing dependency applies to.
+    pub target: String,
+    /// The unmet dependency spec itself.
+    pub depend: Dependency,
+    /// If this dependency became unmet because of a package being
+    /// removed/replaced in the same transaction, that package's name.
+    pub causing_pkg: Option<String>,
+}
+
+impl DepMissing {
+    /// # Safety
+    /// `raw` must point to a valid, non-null `alpm_depmissing_t` (true
+    /// for every element of the list `alpm_checkdeps` returns).
+    pub(crate) unsafe fn from_raw(raw: *mut sys::alpm_depmissing_t) -> Self {
+        let m = &*raw;
+        Self {
+            target: cstr(m.target),
+            depend: Dependency::from_raw(m.depend),
+            causing_pkg: opt_cstr(m.causingpkg),
+        }
+    }
+}
+
+/// A conflict between two packages in a candidate set, as reported by
+/// `alpm_checkconflicts`.
+///
+/// `package1`/`package2` are copied out as plain names (not borrowed
+/// `Package` handles) since the underlying `alpm_conflict_t` is freed
+/// (via `alpm_conflict_free`) immediately after `Handle::check_conflicts`
+/// builds this struct, and the conflicting `alpm_pkg_t` pointers it
+/// references are not guaranteed to remain otherwise reachable.
+#[derive(Debug, Clone)]
+pub struct Conflict {
+    pub package1: String,
+    pub package2: String,
+    pub reason: Dependency,
+}
+
+impl Conflict {
+    /// # Safety
+    /// `raw` must point to a valid, non-null `alpm_conflict_t` (true for
+    /// every element of the list `alpm_checkconflicts` returns), and its
+    /// `package1`/`package2` fields must be valid, non-null `alpm_pkg_t`
+    /// pointers for the duration of this call (both hold: libalpm builds
+    /// them from the same pkglist passed into the call, which is alive
+    /// for the entire `alpm_checkconflicts` invocation).
+    pub(crate) unsafe fn from_raw(raw: *mut sys::alpm_conflict_t) -> Self {
+        let c = &*raw;
+        let p1 = Package::from_raw(c.package1);
+        let p2 = Package::from_raw(c.package2);
+        Self {
+            package1: p1.name(),
+            package2: p2.name(),
+            reason: Dependency::from_raw(c.reason),
+        }
+    }
+}

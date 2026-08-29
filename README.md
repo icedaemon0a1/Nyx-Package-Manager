@@ -39,7 +39,13 @@ This PR delivers the **first slice of Phase 0 (Foundation)**:
   * `handle::Handle` — RAII wrapper over `alpm_handle_t`
     (`initialize`/`Drop`→`alpm_release`, `root`/`dbpath`/`lockfile`/
     `capabilities`/`version`, `add_cachedir`/`set_logfile`,
-    `local_db`/`register_syncdb`/`sync_dbs`/`update_dbs`).
+    `local_db`/`register_syncdb`/`sync_dbs`/`update_dbs`,
+    `check_deps`/`check_conflicts`/`find_dbs_satisfier` — the
+    dependency-resolution primitives `nyx-resolver` will build on).
+  * `borrowed_list` — shared helper for building temporary
+    `alpm_list_t` chains of borrowed payload pointers to pass into
+    libalpm input-list parameters, used by `update_dbs`, `check_deps`,
+    `check_conflicts`, `find_dbs_satisfier`, and `Db::search`.
   * `db::Db` — borrowed view of a local/sync database (`name`,
     `get_pkg`, `packages`, `search`).
   * `pkg::Package` — borrowed package record with typed accessors for

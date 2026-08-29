@@ -20,6 +20,7 @@
 
 pub mod sys;
 
+mod borrowed_list;
 mod cstr;
 mod db;
 mod error;
@@ -31,5 +32,5 @@ pub use db::Db;
 pub use error::AlpmError;
 pub use handle::{AlpmCapabilities, Handle};
 pub use list::AlpmList;
-pub use pkg::{BackupEntry, DepMod, Dependency, PackageFile, PkgReason};
+pub use pkg::{BackupEntry, Conflict, DepMissing, DepMod, Dependency, PackageFile, PkgReason};
 pub use pkg::Package;

@@ -97,6 +97,52 @@ fn search_finds_real_package_by_name_substring() {
 
 #[test]
 #[ignore = "requires the real Arch bootstrap rootfs at /tmp/archtest (not part of the repo)"]
+fn check_deps_reports_no_missing_deps_for_the_real_installed_set() {
+    if skip_if_missing() {
+        eprintln!("skipping: {ROOTFS} not present in this environment");
+        return;
+    }
+    let root = Path::new(ROOTFS);
+    let dbpath = root.join("var/lib/pacman");
+    let handle = Handle::initialize(root, &dbpath).expect("alpm_initialize");
+    let local = handle.local_db().expect("local_db");
+    let packages = local.packages();
+
+    // The real bootstrap's installed set was produced by real pacman,
+    // so checking it against itself (no additions/removals) must not
+    // report any missing dependency -- this exercises the real
+    // alpm_checkdeps FFI call end-to-end with real data.
+    let missing = handle.check_deps(&packages, &[], &[], false);
+    assert!(
+        missing.is_empty(),
+        "expected no missing deps in a real, pacman-installed set, got: {:?}",
+        missing.iter().map(|m| &m.target).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+#[ignore = "requires the real Arch bootstrap rootfs at /tmp/archtest (not part of the repo)"]
+fn find_dbs_satisfier_resolves_a_real_provides_name() {
+    if skip_if_missing() {
+        eprintln!("skipping: {ROOTFS} not present in this environment");
+        return;
+    }
+    let root = Path::new(ROOTFS);
+    let dbpath = root.join("var/lib/pacman");
+    let handle = Handle::initialize(root, &dbpath).expect("alpm_initialize");
+    let local = handle.local_db().expect("local_db");
+
+    // "acl" is both a real installed package name and a real dependency
+    // spec string libalpm can resolve against the local db.
+    let dbs = [local];
+    let satisfier = handle
+        .find_dbs_satisfier(&dbs, "acl")
+        .expect("acl should be satisfiable from the local db");
+    assert_eq!(satisfier.name(), "acl");
+}
+
+#[test]
+#[ignore = "requires the real Arch bootstrap rootfs at /tmp/archtest (not part of the repo)"]
 fn pkg_vercmp_matches_real_alpm_semantics() {
     // alpm_pkg_vercmp does not require a handle at all; exercised here
     // as it is part of the same "real ALPM behaviour, no invented
