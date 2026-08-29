@@ -24,16 +24,49 @@ This PR delivers the **first slice of Phase 0 (Foundation)**:
     and CAS shard-path derivation
   * atomic file writes (temp file → write → fsync → rename), with
     tests asserting no partial file is ever left at the final path
-* `nyx-config`, `nyx-alpm`, `nyx-resolver`, `nyx-transaction`,
-  `nyx-cli` crates are scaffolded (manifest + workspace wiring) but
-  **not yet implemented** — see "Remaining work" below. They are
-  intentionally left as placeholders rather than filled with mocked
-  logic, per this project's explicit "no fake success paths" rule.
+* `nyx-alpm` — real, working ALPM compatibility layer over the
+  system's actual `libalpm.so` (no reimplementation, no mocking):
+  * `build.rs` locates `libalpm` via `pkg-config` and generates raw
+    FFI bindings from the **actually installed** `alpm.h` with
+    `bindgen`, allow-listing only the Phase 0/1 subset of the API.
+  * `sys` — the raw FFI boundary (bindgen output), the only `unsafe`
+    entry point in the crate.
+  * `error::AlpmError` — typed wrapper over `alpm_errno_t`/
+    `alpm_strerror`, convertible into `nyx_core::NyxError`.
+  * `list::AlpmList` — safe, read-only iteration over libalpm's public
+    `alpm_list_t`, with ownership-safety documentation distinguishing
+    borrowed vs. caller-owned lists.
+  * `handle::Handle` — RAII wrapper over `alpm_handle_t`
+    (`initialize`/`Drop`→`alpm_release`, `root`/`dbpath`/`lockfile`/
+    `capabilities`/`version`, `add_cachedir`/`set_logfile`,
+    `local_db`/`register_syncdb`/`sync_dbs`/`update_dbs`).
+  * `db::Db` — borrowed view of a local/sync database (`name`,
+    `get_pkg`, `packages`, `search`).
+  * `pkg::Package` — borrowed package record with typed accessors for
+    every field Phase 0/1 needs (name/version/desc/url/arch/dates/
+    sizes/reason/licenses/groups/depends/optdepends/conflicts/
+    provides/replaces/backup/files).
+  * Unit tests (`cargo test -p nyx-alpm`) run against the real system
+    libalpm 15.0.0 using disposable `tempfile` roots — no mocked ALPM
+    data anywhere.
+  * Integration tests (`cargo test -p nyx-alpm --test real_arch_data
+    -- --ignored`) run against the genuine, live-downloaded Arch
+    bootstrap rootfs's real `/var/lib/pacman/local` package metadata
+    (`acl`, real installed-package count, real file lists) — ignored
+    by default since the ~120MB rootfs is a local sandbox fixture, not
+    checked into the repo.
+* `nyx-config`, `nyx-resolver`, `nyx-transaction`, `nyx-cli` crates
+  are scaffolded (manifest + workspace wiring) but **not yet
+  implemented** — see "Remaining work" below. They are intentionally
+  left as placeholders rather than filled with mocked logic, per this
+  project's explicit "no fake success paths" rule.
 
 Run the tests that exist so far:
 
 ```bash
 cargo test -p nyx-core
+cargo test -p nyx-alpm
+cargo test -p nyx-alpm --test real_arch_data -- --ignored   # needs /tmp/archtest rootfs
 ```
 
 ## Development/verification environment
@@ -62,12 +95,6 @@ See the ADR for full detail and the rationale for each decision.
   → env → CLI) with per-value provenance tracking via `toml_edit`
   spans, plus the `nyx config get/set/unset/list/list --effective/
   validate/reset/explain` subcommands.
-* `nyx-alpm`: `bindgen`-generated FFI over the system `libalpm.so`
-  (verified reachable via `pkg-config --cflags --libs libalpm` in
-  this sandbox — libalpm 15.0.0), wrapped in a safe, typed API
-  (`Handle`, `Db`, `Package`, typed `alpm_errno_t` errors, safe
-  `alpm_list_t` iteration), with all `unsafe` confined to a small
-  `sys`/`ffi` boundary module with documented invariants.
 * `nyx-resolver`: dependency/conflict/provides/replaces resolution
   built on `nyx-alpm`'s `alpm_checkdeps`/`alpm_checkconflicts`/
   `alpm_find_dbs_satisfier`.
